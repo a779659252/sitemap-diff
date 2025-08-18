@@ -1,6 +1,7 @@
 import logging
 import asyncio
 from .manager import RSSManager
+from .notifier import notification_manager, TelegramNotifier, EmailNotifier
 from pathlib import Path
 from urllib.parse import urlparse
 from core.config import telegram_config
@@ -8,6 +9,19 @@ from telegram import Update, Bot
 from telegram.ext import ContextTypes, CommandHandler, Application
 
 rss_manager = RSSManager()
+
+
+# 初始化通知服务
+async def init_notifiers(bot: Bot = None):
+    """初始化通知服务"""
+    if bot:
+        # 注册Telegram通知服务
+        telegram_notifier = TelegramNotifier(bot)
+        notification_manager.register_notifier("telegram", telegram_notifier)
+    
+    # 注册Email通知服务
+    email_notifier = EmailNotifier()
+    notification_manager.register_notifier("email", email_notifier)
 
 
 async def send_update_notification(
@@ -107,12 +121,13 @@ async def rss_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     if not context.args:
         logging.info("显示RSS命令帮助信息")
-        await update.message.reply_text(
+        help_message = (
             "请使用以下命令：\n"
             "/rss list - 显示所有监控的sitemap\n"
             "/rss add URL - 添加sitemap监控（URL必须以sitemap.xml结尾）\n"
             "/rss del URL - 删除sitemap监控"
         )
+        await notification_manager.send_to_all("send_message", message=help_message)
         return
 
     cmd = context.args[0].lower()
@@ -121,26 +136,28 @@ async def rss_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         feeds = rss_manager.get_feeds()
         if not feeds:
             logging.info("RSS订阅列表为空")
-            await update.message.reply_text("当前没有RSS订阅")
+            await notification_manager.send_to_all("send_message", message="当前没有RSS订阅")
             return
 
         feed_list = "\n".join([f"- {feed}" for feed in feeds])
+        list_message = f"当前RSS订阅列表：\n{feed_list}"
         logging.info(f"显示RSS订阅列表，共 {len(feeds)} 个")
-        await update.message.reply_text(f"当前RSS订阅列表：\n{feed_list}")
+        await notification_manager.send_to_all("send_message", message=list_message)
 
     elif cmd == "add":
         if len(context.args) < 2:
             logging.warning("add命令缺少URL参数")
-            await update.message.reply_text(
+            error_message = (
                 "请提供sitemap.xml的URL\n例如：/rss add https://example.com/sitemap.xml"
             )
+            await notification_manager.send_to_all("send_message", message=error_message)
             return
 
         url = context.args[1]
         # 检查URL是否包含sitemap关键词，不再强制要求.xml后缀
         if "sitemap" not in url.lower():
             logging.warning(f"无效的sitemap URL: {url} (URL需包含sitemap关键词)")
-            await update.message.reply_text("URL必须以sitemap.xml结尾")
+            await notification_manager.send_to_all("send_message", message="URL必须以sitemap.xml结尾")
             return
 
         logging.info(f"执行add命令，URL: {url}")
@@ -148,9 +165,9 @@ async def rss_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
         if success:
             if "已存在的feed更新成功" in error_msg:
-                await update.message.reply_text(f"该sitemap已在监控列表中")
+                await notification_manager.send_to_all("send_message", message=f"该sitemap已在监控列表中")
             else:
-                await update.message.reply_text(f"成功添加sitemap监控：{url}")
+                await notification_manager.send_to_all("send_message", message=f"成功添加sitemap监控：{url}")
 
             # 调用新的合并函数
             await send_update_notification(context.bot, url, new_urls, dated_file)
@@ -170,7 +187,7 @@ async def rss_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                             document=current_file,
                             caption=f"今天的Sitemap文件\nURL: {url}",
                         )
-                        await update.message.reply_text(f"该sitemap今天已经更新过")
+                        await notification_manager.send_to_all("send_message", message=f"该sitemap今天已经更新过")
                         # 即使今天更新过，也尝试给频道发送一次通知（可能包含上次比较的结果）
                         # 注意：这里 dated_file 可能不存在，需要处理
                         _, _, dated_file_maybe, existing_new_urls = (
@@ -182,35 +199,40 @@ async def rss_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                             )
 
                     else:
-                        await update.message.reply_text(f"该sitemap今天已经更新过")
+                        await notification_manager.send_to_all("send_message", message=f"该sitemap今天已经更新过")
                 except Exception as e:
                     logging.error(f"发送文件给用户失败: {str(e)}")
-                    await update.message.reply_text(f"该sitemap今天已经更新过")
+                    await notification_manager.send_to_all("send_message", message=f"该sitemap今天已经更新过")
             else:
                 logging.error(f"添加sitemap监控失败: {url} 原因: {error_msg}")
-                await update.message.reply_text(
-                    f"添加sitemap监控失败：{url}\n原因：{error_msg}"
-                )
+                error_message = f"添加sitemap监控失败：{url}\n原因：{error_msg}"
+                await notification_manager.send_to_all("send_message", message=error_message)
 
     elif cmd == "del":
         if len(context.args) < 2:
             logging.warning("del命令缺少URL参数")
-            await update.message.reply_text(
+            error_message = (
                 "请提供要删除的RSS订阅链接\n例如：/rss del https://example.com/feed.xml"
             )
+            await notification_manager.send_to_all("send_message", message=error_message)
             return
 
         url = context.args[1]
         logging.info(f"执行del命令，URL: {url}")
         success, error_msg = rss_manager.remove_feed(url)
+
         if success:
-            logging.info(f"成功删除RSS订阅: {url}")
-            await update.message.reply_text(f"成功删除RSS订阅：{url}")
+            success_message = f"成功删除RSS订阅：{url}"
+            logging.info(success_message)
+            await notification_manager.send_to_all("send_message", message=success_message)
         else:
             logging.error(f"删除RSS订阅失败: {url} 原因: {error_msg}")
-            await update.message.reply_text(
-                f"删除RSS订阅失败：{url}\n原因：{error_msg}"
-            )
+            error_message = f"删除RSS订阅失败：{url}\n原因：{error_msg}"
+            await notification_manager.send_to_all("send_message", message=error_message)
+
+    else:
+        unknown_command_message = f"未知命令: {cmd}\n请使用 /rss 查看帮助"
+        await notification_manager.send_to_all("send_message", message=unknown_command_message)
 
 
 def register_commands(application: Application):

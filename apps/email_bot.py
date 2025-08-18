@@ -273,7 +273,7 @@ async def scheduled_task():
     await asyncio.sleep(5)
     
     # 修改导入
-    from services.rss.commands import rss_manager
+    from services.rss.commands import rss_manager, notification_manager
     
     while True:
         try:
@@ -288,8 +288,13 @@ async def scheduled_task():
                 success, error_msg, dated_file, new_urls = rss_manager.add_feed(url)
                 
                 if success and dated_file.exists():
-                    # 直接调用合并后的函数
-                    await send_update_notification(url, new_urls, dated_file)
+                    # 使用新的通知系统
+                    await notification_manager.send_to_all(
+                        "send_update_notification",
+                        url=url,
+                        new_urls=new_urls,
+                        dated_file=dated_file
+                    )
                     if new_urls:
                         logging.info(
                             f"订阅源 {url} 更新成功，发现 {len(new_urls)} 个新URL，已发送通知。"
