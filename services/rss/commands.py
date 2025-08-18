@@ -110,7 +110,6 @@ async def send_update_notification(
             logging.info(f"已发送更新结束消息 for {domain}")
     except Exception as e:
         logging.error(f"发送URL更新消息失败 for {url}: {str(e)}", exc_info=True)
-        # logging.traceback.print_exc()
 
 
 async def rss_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

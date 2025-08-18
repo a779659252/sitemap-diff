@@ -2,9 +2,7 @@ import asyncio
 import logging
 from telegram.ext import Application, CommandHandler
 from services.rss.commands import rss_command, init_notifiers
-from apps.telegram_bot import setup_telegram_handlers
-from apps.discord_bot import setup_discord_handlers
-from apps.email_bot import init_task as email_init_task, start_task as email_start_task
+from apps.email_bot import init_task as email_init_task, start_task as email_start_task, scheduled_task as email_scheduled_task
 
 
 async def main():
@@ -27,8 +25,6 @@ async def main():
         # 设置处理器
         application.add_handler(CommandHandler("rss", rss_command))
         
-        # 设置其他Telegram处理器
-        setup_telegram_handlers(application)
         
         logging.info("Telegram Bot已启动")
     else:
@@ -42,13 +38,13 @@ async def main():
     
     if discord_token:
         # Discord Bot的初始化逻辑
-        setup_discord_handlers()
         logging.info("Discord Bot已启动")
     
     # 初始化Email Bot
     try:
         await email_init_task()
         await email_start_task()
+        asyncio.create_task(email_scheduled_task())
         logging.info("Email Bot已启动")
     except Exception as e:
         logging.error(f"Email Bot初始化失败: {str(e)}")
